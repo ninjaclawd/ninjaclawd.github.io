@@ -70,6 +70,11 @@ input:focus,select:focus{border-color:var(--accent)}
 #chat-bar input{flex:1}
 #chat-bar select{width:auto;min-width:100px}
 
+/* Stats bar */
+#stats-bar{padding:6px 16px;border-bottom:1px solid var(--border);background:var(--bg2);font-size:11px;color:var(--fg2);display:none}
+#stats-bar .stat{display:inline-block;margin-right:14px}
+#stats-bar .stat-val{color:var(--fg);font-weight:600}
+
 /* Skills panel */
 #skills-panel{padding:8px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--fg2);max-height:80px;overflow-y:auto}
 .skill-tag{display:inline-block;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:1px 6px;margin:1px 2px;font-size:10px}
@@ -109,6 +114,7 @@ input:focus,select:focus{border-color:var(--accent)}
 </div>
 
 <div id="main">
+  <div id="stats-bar"></div>
   <div id="messages"></div>
   <div id="chat-bar">
     <select id="chat-target">
@@ -277,6 +283,25 @@ input:focus,select:focus{border-color:var(--accent)}
     } catch(e) { return null; }
   }
 
+  // ── Stats Bar ──────────────────────────────────────────────────────────
+  const statsBar = $('stats-bar');
+
+  function updateStatsBar(data) {
+    const upH = Math.round((data.uptime || 0) / 3600);
+    statsBar.innerHTML = [
+      stat('Runs Today', data.todayRuns ?? '?'),
+      stat('Total', data.totalRuns ?? '?'),
+      stat('Approved', data.approved ?? '?'),
+      stat('Rate', (data.approvalRate ?? '?') + '%'),
+      stat('Uptime', upH + 'h'),
+    ].join('');
+    statsBar.style.display = 'block';
+  }
+
+  function stat(label, val) {
+    return '<span class="stat">' + label + ': <span class="stat-val">' + val + '</span></span>';
+  }
+
   // ── Connection ─────────────────────────────────────────────────────────
   async function doConnect() {
     const room = inpRoom.value.trim();
@@ -391,9 +416,14 @@ input:focus,select:focus{border-color:var(--accent)}
               env.ts);
             break;
           case 'command_response':
-            addMessage('command_response', env.from.name || sender,
-              JSON.stringify(env.payload, null, 2),
-              env.ts);
+            // Check if this is a health response and update stats bar
+            if (env.payload?.command === 'health' && env.payload?.result) {
+              updateStatsBar(env.payload.result);
+            } else {
+              addMessage('command_response', env.from.name || sender,
+                JSON.stringify(env.payload, null, 2),
+                env.ts);
+            }
             break;
           case 'ping':
             // Auto-respond with pong
@@ -473,13 +503,20 @@ input:focus,select:focus{border-color:var(--accent)}
 
       addMessage('system', 'System', 'Connected to room: ' + room, Date.now());
 
-      // Request history from any peers
+      // Request history and health from peers
       setTimeout(() => {
         if (sdk && connected) {
-          const req = createEnvelope('history_request', { count: 50 });
-          try { sdk.sendData(req); } catch(err) {}
+          try { sdk.sendData(createEnvelope('history_request', { count: 50 })); } catch(err) {}
+          try { sdk.sendData(createEnvelope('command', { command: 'health' })); } catch(err) {}
         }
       }, 2000);
+
+      // Refresh health stats every 60s
+      setInterval(() => {
+        if (sdk && connected) {
+          try { sdk.sendData(createEnvelope('command', { command: 'health' })); } catch(err) {}
+        }
+      }, 60000);
 
     } catch(err) {
       statusEl.textContent = 'Error: ' + err.message;
